@@ -6,7 +6,7 @@ function createApp() {
   const tasks = [];
   let nextId = 1;
 
-  app.get('/health', (req, res) => res.json({ status: 'ok' }));
+  app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
   app.get('/tasks', (req, res) => res.json(tasks));
   app.post('/tasks', (req, res) => {
     if (!req.body || !req.body.title) {
