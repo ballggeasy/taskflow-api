@@ -46,7 +46,8 @@ pipeline {
     }
 
     stage('Deploy - Production') {
-      when { branch 'main' }
+      // beforeInput: evaluate the branch condition before pausing, or every branch would wait for approval
+      when { branch 'main'; beforeInput true }
       input { message 'Deploy to production?' }
       steps { echo 'deploying to production...' }
     }
