@@ -1,3 +1,8 @@
+// Runs kubectl in a container on the kind docker network; needs $KUBECONFIG (file credential) in scope.
+def kubectl(String args) {
+  return sh(script: "docker run --rm -i --network kind -v \"$KUBECONFIG\":/kube/config:ro -e KUBECONFIG=/kube/config registry.k8s.io/kubectl:v1.31.0 ${args}", returnStdout: true).trim()
+}
+
 pipeline {
   // No global agent: build stages get a Docker agent, waiting stages need no executor
   // (the linux-build node has a single executor).
@@ -5,6 +10,8 @@ pipeline {
 
   parameters {
     // Lab 06 demo switch: false lets a critical CVE pass the SCA stage so the OPA policy gate can be shown blocking on its own
+    string(name: 'BASE_IMAGE', defaultValue: 'node:20-alpine', description: 'Lab 07 demo: base image for the container build (use an old image to trip the Trivy gate)')
+    booleanParam(name: 'BROKEN_IMAGE', defaultValue: false, description: 'Lab 07 demo: deploy a non-existent image tag to trigger the automatic rollback')
     booleanParam(name: 'SCA_BLOCK', defaultValue: true, description: 'Fail the SCA stage on critical vulnerabilities')
   }
 
@@ -189,16 +196,69 @@ pipeline {
       }
     }
 
-    stage('Deploy - Staging') {
-      when { branch 'develop' }
-      steps { echo 'deploying to staging...' }
+    stage('Build Image') {
+      agent { label 'linux-build' }
+      steps {
+        script {
+          // Immutable tag = short commit SHA, never "latest"
+          env.IMAGE_TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          env.IMAGE = "localhost:5001/taskflow-api:${env.IMAGE_TAG}"
+        }
+        sh 'docker build --build-arg BASE=${BASE_IMAGE} -t $IMAGE .'
+        sh 'docker push $IMAGE'
+      }
+      post { failure { script { env.FAILED_STAGE = env.STAGE_NAME } } }
     }
 
-    stage('Deploy - Production') {
-      // beforeInput: evaluate the branch condition before pausing, or every branch would wait for approval
-      when { branch 'main'; beforeInput true }
-      input { message 'Deploy to production?' }
-      steps { echo 'deploying to production...' }
+    stage('Container Scan') {
+      agent { label 'linux-build' }
+      steps {
+        sh '''
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
+            -v "$WORKSPACE":/w aquasec/trivy:latest image \
+            --exit-code 1 --severity HIGH,CRITICAL --format sarif -o /w/trivy.sarif $IMAGE
+        '''
+      }
+      post {
+        always { archiveArtifacts artifacts: 'trivy.sarif', allowEmptyArchive: true }
+        failure { script { env.FAILED_STAGE = env.STAGE_NAME } }
+      }
+    }
+
+    stage('Blue/Green Deploy') {
+      // main only; a plain (non-multibranch) job has no BRANCH_NAME
+      when { anyOf { branch 'main'; expression { env.BRANCH_NAME == null } } }
+      agent { label 'linux-build' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          script {
+            def current = kubectl("get svc taskflow -o jsonpath='{.spec.selector.color}'")
+            def next = current == 'blue' ? 'green' : 'blue'
+            env.PREV_COLOR = current
+            def image = params.BROKEN_IMAGE ? 'localhost:5001/taskflow-api:does-not-exist' : env.IMAGE
+            kubectl("set image deployment/taskflow-${next} app=${image}")
+            kubectl("rollout status deployment/taskflow-${next} --timeout=60s")
+            // smoke test the new pods through their own Service, bypassing the live one
+            kubectl("run smoke-${BUILD_NUMBER} --rm -i --restart=Never --image-pull-policy=IfNotPresent --image=curlimages/curl -- curl -sf http://taskflow-${next}:8080/health")
+            kubectl("patch svc taskflow -p '{\"spec\":{\"selector\":{\"color\":\"${next}\"}}}'")
+            echo "Switched traffic from ${current} to ${next}"
+          }
+        }
+      }
+      post {
+        failure {
+          // automated rollback: point the live Service back at the previous color
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            script {
+              env.FAILED_STAGE = env.STAGE_NAME
+              if (env.PREV_COLOR) {
+                kubectl("patch svc taskflow -p '{\"spec\":{\"selector\":{\"color\":\"${env.PREV_COLOR}\"}}}'")
+                echo "ROLLBACK: traffic stays on ${env.PREV_COLOR}"
+              }
+            }
+          }
+        }
+      }
     }
   }
 

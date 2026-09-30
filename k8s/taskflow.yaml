@@ -1,0 +1,52 @@
+# Blue/green: two Deployments, one public Service whose selector picks the live color,
+# plus one internal Service per color so a new color can be smoke-tested before the switch.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: taskflow-blue }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: taskflow, color: blue } }
+  template:
+    metadata: { labels: { app: taskflow, color: blue } }
+    spec:
+      containers:
+        - name: app
+          image: localhost:5001/taskflow-api:bootstrap
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 3 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: taskflow-green }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: taskflow, color: green } }
+  template:
+    metadata: { labels: { app: taskflow, color: green } }
+    spec:
+      containers:
+        - name: app
+          image: localhost:5001/taskflow-api:bootstrap
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 3 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: taskflow }
+spec:
+  selector: { app: taskflow, color: blue }
+  ports: [{ port: 80, targetPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: taskflow-blue }
+spec:
+  selector: { app: taskflow, color: blue }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: taskflow-green }
+spec:
+  selector: { app: taskflow, color: green }
+  ports: [{ port: 8080, targetPort: 8080 }]

@@ -1,4 +1,5 @@
-FROM node:20-alpine
+ARG BASE=node:20-alpine
+FROM ${BASE}
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
