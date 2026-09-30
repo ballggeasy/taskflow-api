@@ -24,6 +24,12 @@ terraform {
   }
 }
 
+variable "allowed_cidr" {
+  type        = string
+  description = "Private network allowed to reach taskflow-api (never 0.0.0.0/0)"
+  default     = "10.0.0.0/8"
+}
+
 variable "localstack_endpoint" {
   type    = string
   default = "http://localstack:4566"
@@ -48,25 +54,38 @@ resource "aws_security_group" "taskflow" {
   description = "Allow taskflow-api traffic on 8080"
 
   ingress {
-    description = "taskflow-api"
+    description = "taskflow-api from the private network"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.allowed_cidr]
   }
 
   egress {
+    description = "outbound to the private network only"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.allowed_cidr]
   }
 }
 
 resource "aws_instance" "taskflow" {
+  #checkov:skip=CKV2_AWS_41:no AWS API access is needed by this lab instance, so no IAM role is attached
   ami                    = "ami-ff0fea8310f3"
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.taskflow.id]
+  ebs_optimized          = true
+  monitoring             = true
+
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  root_block_device {
+    encrypted = true
+  }
 
   tags = {
     Name = "taskflow-host"
