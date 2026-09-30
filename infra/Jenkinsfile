@@ -90,7 +90,7 @@ pipeline {
           docker run -d --name taskflow-host --network iac -v /var/run/docker.sock:/var/run/docker.sock \
             -e PUBKEY="$(cat ansible_key.pub)" taskflow-host
           sleep 3
-          docker run --rm -v "$WORKSPACE":/work -w /work willhallonline/ansible:latest \
+          docker run --rm -u 0 -v "$WORKSPACE":/work -w /work willhallonline/ansible:latest \
             sh -c "python3 infra/ansible/inventory.py tf-output.json > inventory.ini && cat inventory.ini && \
                    ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook -i inventory.ini infra/ansible/playbook.yml \
                    -e taskflow_image=localhost:5001/taskflow-api:d45421e"
