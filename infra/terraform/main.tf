@@ -72,7 +72,7 @@ resource "aws_security_group" "taskflow" {
 
 resource "aws_instance" "taskflow" {
   #checkov:skip=CKV2_AWS_41:no AWS API access is needed by this lab instance, so no IAM role is attached
-  ami                    = "ami-ff0fea8310f3"
+  ami                    = "ami-03cf127a"
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.taskflow.id]
   ebs_optimized          = true
