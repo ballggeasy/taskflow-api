@@ -118,12 +118,13 @@ pipeline {
 
     stage('Generate SBOM') {
       agent { label 'linux-build' }
-      environment { COSIGN_PASSWORD = '' }
       steps {
         sh '''
           docker run --rm -v "$WORKSPACE":/w -w /w anchore/syft:latest             dir:. --exclude ./node_modules -o cyclonedx-json=taskflow-api.cdx.json
           # local throwaway keypair (lab): sign the SBOM, archive SBOM + signature + public key
           rm -f cosign.key cosign.pub
+          # cosign refuses an empty key password; use a random per-build one (the key is deleted after signing)
+          export COSIGN_PASSWORD=$(head -c 24 /dev/urandom | base64)
           docker run --rm -e COSIGN_PASSWORD -v "$WORKSPACE":/w -w /w ghcr.io/sigstore/cosign/cosign:v2.4.1             generate-key-pair
           docker run --rm -e COSIGN_PASSWORD -v "$WORKSPACE":/w -w /w ghcr.io/sigstore/cosign/cosign:v2.4.1             sign-blob --yes --key cosign.key --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json
           rm -f cosign.key
