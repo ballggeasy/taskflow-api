@@ -17,9 +17,9 @@ pipeline {
       parallel {
         stage('Terraform Validate') {
           steps {
-            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 init -backend=false'
-            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 validate'
-            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 fmt -check -recursive'
+            sh 'docker run --rm -e TF_DATA_DIR=/tmp/tfv -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 init -backend=false'
+            sh 'docker run --rm -e TF_DATA_DIR=/tmp/tfv -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 validate'
+            sh 'docker run --rm -e TF_DATA_DIR=/tmp/tfv -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 fmt -check -recursive'
           }
         }
         stage('Ansible Lint') {
