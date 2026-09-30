@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "lint": "eslint src tests",
-    "test": "jest"
+    "test": "jest",
+    "test:e2e": "playwright test"
   },
   "license": "MIT",
   "dependencies": {
@@ -15,6 +16,25 @@
   "devDependencies": {
     "eslint": "^8.57.0",
     "jest": "^29.7.0",
-    "supertest": "^7.0.0"
+    "supertest": "^7.0.0",
+    "jest-junit": "^16.0.0",
+    "@playwright/test": "1.49.1"
+  },
+  "jest": {
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js"
+    ],
+    "coverageReporters": [
+      "lcov",
+      "cobertura",
+      "text-summary"
+    ]
+  },
+  "jest-junit": {
+    "outputDirectory": "reports",
+    "outputName": "junit.xml"
   }
 }

@@ -1,5 +1,6 @@
 node_modules/
 coverage/
 reports/
+playwright-report/
+test-results/
 terraform.tfstate*
-
