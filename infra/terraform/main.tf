@@ -89,6 +89,12 @@ resource "aws_instance" "taskflow" {
     volume_size = 8
   }
 
+  # LocalStack accepts these at creation but returns 501 for the follow-up ModifyInstance*
+  # calls, which would show up as perpetual drift. Not needed on real AWS.
+  lifecycle {
+    ignore_changes = [metadata_options, monitoring]
+  }
+
   tags = {
     Name = "taskflow-host"
   }
