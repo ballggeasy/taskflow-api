@@ -4,3 +4,7 @@ reports/
 playwright-report/
 test-results/
 terraform.tfstate*
+terraform.tfstate*
+.terraform/
+tfplan
+*.tfvars

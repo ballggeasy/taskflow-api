@@ -1,0 +1,114 @@
+// Lab 08 - Infrastructure as Code pipeline (Terraform on LocalStack + Ansible)
+def tf(String args) {
+  sh "docker run --rm --network iac -v \"\$WORKSPACE\":/work -w /work/infra/terraform -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test hashicorp/terraform:1.9 ${args}"
+}
+
+pipeline {
+  agent { label 'linux-build' }
+
+  parameters {
+    choice(name: 'ACTION', choices: ['apply', 'destroy'], description: 'apply = plan/approve/apply/configure, destroy = tear the environment down')
+  }
+
+  options { timeout(time: 40, unit: 'MINUTES') }
+
+  stages {
+    stage('IaC Lint & Validate') {
+      parallel {
+        stage('Terraform Validate') {
+          steps {
+            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 init -backend=false'
+            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 validate'
+            sh 'docker run --rm -v "$WORKSPACE":/work -w /work/infra/terraform hashicorp/terraform:1.9 fmt -check -recursive'
+          }
+        }
+        stage('Ansible Lint') {
+          steps {
+            sh 'docker run --rm -v "$WORKSPACE":/work -w /work pipelinecomponents/ansible-lint:latest ansible-lint infra/ansible/playbook.yml'
+          }
+        }
+      }
+    }
+
+    stage('IaC Security Scan') {
+      parallel {
+        stage('tfsec') {
+          steps {
+            sh 'docker run --rm -v "$WORKSPACE":/src aquasec/tfsec:latest /src/infra/terraform --no-colour > tfsec.txt || (cat tfsec.txt; exit 1)'
+          }
+        }
+        stage('Checkov') {
+          steps {
+            sh 'docker run --rm -v "$WORKSPACE":/src bridgecrew/checkov:latest -d /src/infra/terraform --compact --quiet > checkov.txt || (cat checkov.txt; exit 1)'
+          }
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'tfsec.txt,checkov.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Terraform Plan') {
+      when { expression { params.ACTION == 'apply' } }
+      steps {
+        // the state bucket must exist before init
+        sh 'docker run --rm --network iac curlimages/curl:latest -sf -X PUT http://localstack:4566/taskflow-tfstate'
+        tf('init -input=false')
+        tf('plan -input=false -out=tfplan')
+        script {
+          tf('show -no-color tfplan > /work/plan.txt')
+          env.PLAN_SUMMARY = sh(script: "grep -E '^Plan:|No changes' plan.txt || true", returnStdout: true).trim()
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'infra/terraform/tfplan,plan.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Approval') {
+      when { expression { params.ACTION == 'apply' } }
+      agent none
+      steps {
+        input message: "Apply this plan?  ${env.PLAN_SUMMARY}", ok: 'Apply'
+      }
+    }
+
+    stage('Terraform Apply') {
+      when { expression { params.ACTION == 'apply' } }
+      steps {
+        tf('apply -input=false tfplan')
+        tf('output -json > /work/tf-output.json')
+        sh 'cat tf-output.json'
+      }
+      post { always { archiveArtifacts artifacts: 'tf-output.json', allowEmptyArchive: true } }
+    }
+
+    stage('Configure with Ansible') {
+      when { expression { params.ACTION == 'apply' } }
+      steps {
+        sh '''
+          docker rm -f taskflow-host >/dev/null 2>&1 || true
+          rm -f ansible_key ansible_key.pub
+          ssh-keygen -q -t ed25519 -N "" -f ansible_key
+          docker build -t taskflow-host infra/host
+          docker run -d --name taskflow-host --network iac -v /var/run/docker.sock:/var/run/docker.sock \
+            -e PUBKEY="$(cat ansible_key.pub)" taskflow-host
+          sleep 3
+          docker run --rm -v "$WORKSPACE":/work -w /work willhallonline/ansible:latest \
+            sh -c "python3 infra/ansible/inventory.py tf-output.json > inventory.ini && cat inventory.ini && \
+                   ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook -i inventory.ini infra/ansible/playbook.yml \
+                   -e taskflow_image=localhost:5001/taskflow-api:d45421e"
+        '''
+      }
+      post { always { sh 'rm -f ansible_key ansible_key.pub; docker rm -f taskflow-host >/dev/null 2>&1 || true' } }
+    }
+
+    stage('Terraform Destroy') {
+      when { expression { params.ACTION == 'destroy' } }
+      steps {
+        input message: 'Destroy the taskflow environment?', ok: 'Destroy'
+        tf('init -input=false')
+        tf('destroy -input=false -auto-approve')
+        tf('state list > /work/state-after-destroy.txt || true')
+        sh 'echo "resources left in state: $(wc -l < state-after-destroy.txt)"'
+      }
+      post { always { archiveArtifacts artifacts: 'state-after-destroy.txt', allowEmptyArchive: true } }
+    }
+  }
+}

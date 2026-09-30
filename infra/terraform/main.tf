@@ -1,0 +1,83 @@
+terraform {
+  required_version = ">= 1.6"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+
+  # Remote state in an S3-compatible bucket (LocalStack). State is never committed.
+  backend "s3" {
+    bucket                      = "taskflow-tfstate"
+    key                         = "taskflow/terraform.tfstate"
+    region                      = "us-east-1"
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_requesting_account_id  = true
+    skip_region_validation      = true
+    endpoints = {
+      s3 = "http://localstack:4566"
+    }
+  }
+}
+
+variable "localstack_endpoint" {
+  type    = string
+  default = "http://localstack:4566"
+}
+
+# Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment.
+provider "aws" {
+  region                      = "us-east-1"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+  s3_use_path_style           = true
+
+  endpoints {
+    ec2 = var.localstack_endpoint
+    s3  = var.localstack_endpoint
+  }
+}
+
+resource "aws_security_group" "taskflow" {
+  name        = "taskflow-sg"
+  description = "Allow taskflow-api traffic on 8080"
+
+  ingress {
+    description = "taskflow-api"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "taskflow" {
+  ami                    = "ami-ff0fea8310f3"
+  instance_type          = "t3.micro"
+  vpc_security_group_ids = [aws_security_group.taskflow.id]
+
+  tags = {
+    Name = "taskflow-host"
+  }
+}
+
+output "instance_address" {
+  description = "Address of the taskflow instance"
+  value       = aws_instance.taskflow.private_ip
+}
+
+output "instance_name" {
+  value = aws_instance.taskflow.tags["Name"]
+}

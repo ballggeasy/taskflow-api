@@ -1,0 +1,27 @@
+---
+- name: Configure the taskflow host
+  hosts: taskflow
+  gather_facts: true
+  vars:
+    image: "{{ taskflow_image }}"
+  tasks:
+    - name: Install Node.js and the Docker CLI
+      ansible.builtin.apt:
+        name:
+          - nodejs
+          - docker.io
+        state: present
+        update_cache: true
+
+    - name: Pull the taskflow-api image built in Lab 07
+      ansible.builtin.command: docker pull {{ image }}
+      changed_when: true
+
+    - name: Show installed versions
+      ansible.builtin.shell: "node --version && docker --version"
+      register: versions
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ versions.stdout_lines }}"
