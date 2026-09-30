@@ -54,7 +54,7 @@ pipeline {
         tf('init -input=false')
         tf('plan -input=false -out=tfplan')
         script {
-          tf('show -no-color tfplan > /work/plan.txt')
+          tf('show -no-color tfplan > plan.txt')
           env.PLAN_SUMMARY = sh(script: "grep -E '^Plan:|No changes' plan.txt || true", returnStdout: true).trim()
         }
       }
@@ -73,7 +73,7 @@ pipeline {
       when { expression { params.ACTION == 'apply' } }
       steps {
         tf('apply -input=false tfplan')
-        tf('output -json > /work/tf-output.json')
+        tf('output -json > tf-output.json')
         sh 'cat tf-output.json'
       }
       post { always { archiveArtifacts artifacts: 'tf-output.json', allowEmptyArchive: true } }
@@ -105,7 +105,7 @@ pipeline {
         input message: 'Destroy the taskflow environment?', ok: 'Destroy'
         tf('init -input=false')
         tf('destroy -input=false -auto-approve')
-        tf('state list > /work/state-after-destroy.txt || true')
+        tf('state list > state-after-destroy.txt || true')
         sh 'echo "resources left in state: $(wc -l < state-after-destroy.txt)"'
       }
       post { always { archiveArtifacts artifacts: 'state-after-destroy.txt', allowEmptyArchive: true } }
