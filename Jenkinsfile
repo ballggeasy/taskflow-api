@@ -246,7 +246,7 @@ pipeline {
       steps {
         script {
           def job = env.JOB_NAME.replace('/', '%2F')
-          def q = "sum(default_jenkins_builds_success_build_count_total{jenkins_job=\"${env.JOB_NAME}\"}) / sum(default_jenkins_builds_total_build_count_total{jenkins_job=\"${env.JOB_NAME}\"})"
+          def q = "sum(default_jenkins_builds_success_build_count_total{jenkins_job=\"${env.JOB_NAME}\"} or vector(0)) / sum(default_jenkins_builds_total_build_count_total{jenkins_job=\"${env.JOB_NAME}\"})"
           def url = "http://prometheus:9090/api/v1/query?query=" + java.net.URLEncoder.encode(q, 'UTF-8')
           def rate = sh(script: "wget -qO- '${url}' | node -e \"const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.data.result.length?parseFloat(d.data.result[0].value[1]).toFixed(3):'0')\"", returnStdout: true).trim().toDouble()
           echo "Pipeline success rate from Prometheus: ${rate} (required: ${params.HEALTH_THRESHOLD ?: '0.9'})"
