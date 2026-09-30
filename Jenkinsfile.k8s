@@ -1,0 +1,50 @@
+// Lab 09: the Lab 03 pipeline with the static Docker agent replaced by an ephemeral Kubernetes pod
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: node
+    image: node:20-alpine
+    imagePullPolicy: IfNotPresent
+    command: ['cat']
+    tty: true
+  - name: jnlp
+    image: jenkins/inbound-agent:latest-jdk21
+    imagePullPolicy: IfNotPresent
+'''
+      defaultContainer 'node'
+    }
+  }
+
+  parameters {
+    // Lab 09 saturation demo: keeps each pod busy long enough for the queue to back up
+    string(name: 'HOLD_SECONDS', defaultValue: '0', description: 'Extra seconds to keep the pod busy')
+  }
+
+  environment {
+    APP_NAME = 'taskflow-api'
+    NODE_ENV = 'test'
+  }
+
+  options { timeout(time: 30, unit: 'MINUTES') }
+
+  stages {
+    stage('Where am I') { steps { sh 'echo "running in pod: $HOSTNAME"' } }
+    stage('Install') { steps { sh 'npm ci' } }
+    stage('Lint') { steps { sh 'npm run lint' } }
+    stage('Unit Test') { steps { sh 'npm test' } }
+    stage('Hold') {
+      when { expression { params.HOLD_SECONDS != '0' } }
+      steps { sh 'sleep ${HOLD_SECONDS}' }
+    }
+  }
+
+  post {
+    success { echo "✅ ${env.APP_NAME} passed on ${env.NODE_ENV}" }
+    failure { echo '❌ pipeline failed' }
+  }
+}
