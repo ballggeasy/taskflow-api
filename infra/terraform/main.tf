@@ -84,7 +84,8 @@ resource "aws_instance" "taskflow" {
   }
 
   root_block_device {
-    encrypted = true
+    encrypted   = true
+    volume_size = 8
   }
 
   tags = {
