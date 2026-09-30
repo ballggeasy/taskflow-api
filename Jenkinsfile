@@ -3,6 +3,11 @@ pipeline {
   // (the linux-build node has a single executor).
   agent none
 
+  parameters {
+    // Lab 06 demo switch: false lets a critical CVE pass the SCA stage so the OPA policy gate can be shown blocking on its own
+    booleanParam(name: 'SCA_BLOCK', defaultValue: true, description: 'Fail the SCA stage on critical vulnerabilities')
+  }
+
   environment {
     APP_NAME = 'taskflow-api'
     NODE_ENV = 'test'
@@ -12,7 +17,7 @@ pipeline {
     // A hung npm install or test run (network stall, open handle keeping Jest alive)
     // would hold the executor forever and starve every queued build behind it.
     // A hard timeout frees the executor and turns a silent hang into a visible failure.
-    timeout(time: 30, unit: 'MINUTES')
+    timeout(time: 45, unit: 'MINUTES')
   }
 
   stages {
@@ -45,6 +50,99 @@ pipeline {
       post {
         always { archiveArtifacts artifacts: 'npm-debug.log*', allowEmptyArchive: true }
       }
+    }
+
+    stage('Secrets Detection') {
+      agent { label 'linux-build' }
+      steps {
+        // Scans the full git history, not just the working tree
+        sh '''
+          docker run --rm -v "$WORKSPACE":/repo -w /repo zricethezav/gitleaks:latest             detect --source . --report-format json --report-path gitleaks-report.json --exit-code 1
+        '''
+      }
+      post {
+        always { archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true }
+        failure { script { env.FAILED_STAGE = env.STAGE_NAME } }
+      }
+    }
+
+    stage('SAST') {
+      parallel {
+        stage('ESLint Security') {
+          agent { docker { image 'node:20-alpine'; label 'linux-build' } }
+          steps {
+            sh 'npm ci'
+            sh 'npx eslint --plugin security src/ -f @microsoft/eslint-formatter-sarif -o eslint.sarif'
+          }
+          post { always { archiveArtifacts artifacts: 'eslint.sarif', allowEmptyArchive: true } }
+        }
+        stage('Semgrep') {
+          agent { label 'linux-build' }
+          steps {
+            sh '''
+              docker run --rm -v "$WORKSPACE":/src -w /src semgrep/semgrep:latest                 semgrep scan --config=p/owasp-top-ten --config=p/nodejs --sarif --output semgrep.sarif --error src
+            '''
+          }
+          post { always { archiveArtifacts artifacts: 'semgrep.sarif', allowEmptyArchive: true } }
+        }
+      }
+      post { failure { script { env.FAILED_STAGE = env.STAGE_NAME } } }
+    }
+
+    stage('SCA - npm audit') {
+      agent { docker { image 'node:20-alpine'; label 'linux-build' } }
+      steps {
+        script {
+          sh 'npm ci && (npm audit --audit-level=high --json > audit.json || true)'
+          // node instead of jq: the node image ships no jq
+          def critical = sh(
+            script: "node -p \"require('./audit.json').metadata.vulnerabilities.critical\"",
+            returnStdout: true
+          ).trim().toInteger()
+          def high = sh(
+            script: "node -p \"require('./audit.json').metadata.vulnerabilities.high\"",
+            returnStdout: true
+          ).trim().toInteger()
+          if (high > 0) { echo "WARNING: ${high} high vulnerabilities (warn only)" }
+          if (critical > 0 && params.SCA_BLOCK) {
+            error("Blocking: ${critical} critical vulnerabilities found")
+          }
+          echo "SCA finished: ${critical} critical, ${high} high (only critical blocks)"
+        }
+      }
+      post {
+        always { archiveArtifacts artifacts: 'audit.json', allowEmptyArchive: true }
+        failure { script { env.FAILED_STAGE = env.STAGE_NAME } }
+      }
+    }
+
+    stage('Generate SBOM') {
+      agent { label 'linux-build' }
+      environment { COSIGN_PASSWORD = '' }
+      steps {
+        sh '''
+          docker run --rm -v "$WORKSPACE":/w -w /w anchore/syft:latest             dir:. --exclude ./node_modules -o cyclonedx-json=taskflow-api.cdx.json
+          # local throwaway keypair (lab): sign the SBOM, archive SBOM + signature + public key
+          rm -f cosign.key cosign.pub
+          docker run --rm -e COSIGN_PASSWORD -v "$WORKSPACE":/w -w /w ghcr.io/sigstore/cosign/cosign:v2.4.1             generate-key-pair
+          docker run --rm -e COSIGN_PASSWORD -v "$WORKSPACE":/w -w /w ghcr.io/sigstore/cosign/cosign:v2.4.1             sign-blob --yes --key cosign.key --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json
+          rm -f cosign.key
+        '''
+      }
+      post {
+        always { archiveArtifacts artifacts: 'taskflow-api.cdx.json,taskflow-api.cdx.json.sig,cosign.pub', allowEmptyArchive: true }
+        failure { script { env.FAILED_STAGE = env.STAGE_NAME } }
+      }
+    }
+
+    stage('Policy Gate') {
+      agent { label 'linux-build' }
+      steps {
+        sh '''
+          docker run --rm -v "$WORKSPACE":/w -w /w openpolicyagent/opa:latest-static             eval --fail-defined -i audit.json -d policy/security.rego 'data.security.deny[_]'
+        '''
+      }
+      post { failure { script { env.FAILED_STAGE = env.STAGE_NAME } } }
     }
 
     stage('SonarQube Analysis') {
