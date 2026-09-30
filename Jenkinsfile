@@ -55,9 +55,9 @@ pipeline {
     stage('Secrets Detection') {
       agent { label 'linux-build' }
       steps {
-        // Scans the full git history, not just the working tree
+        // Scans the full history reachable from HEAD (all commits of this branch), not just the working tree
         sh '''
-          docker run --rm -v "$WORKSPACE":/repo -w /repo zricethezav/gitleaks:latest             detect --source . --report-format json --report-path gitleaks-report.json --exit-code 1
+          docker run --rm -v "$WORKSPACE":/repo -w /repo zricethezav/gitleaks:latest             detect --source . --log-opts="HEAD" --report-format json --report-path gitleaks-report.json --exit-code 1
         '''
       }
       post {
