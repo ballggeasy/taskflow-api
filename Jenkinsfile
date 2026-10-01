@@ -45,7 +45,7 @@ pipeline {
     string(name: 'BASE_IMAGE', defaultValue: 'node:20-alpine', description: 'Base image for the container build')
     booleanParam(name: 'BROKEN_IMAGE', defaultValue: false, description: 'Demo: deploy a non-existent image tag to trigger the automatic rollback')
     booleanParam(name: 'SCA_BLOCK', defaultValue: true, description: 'Fail the SCA stage on critical vulnerabilities')
-    string(name: 'HEALTH_THRESHOLD', defaultValue: '0.9', description: 'Minimum pipeline success rate required before deploying to production')
+    string(name: 'HEALTH_THRESHOLD', defaultValue: '0.9', description: 'Minimum pipeline success rate (Jenkins health score via Prometheus) required before deploying to production; lower it only for an approved emergency fix')
   }
 
   environment {
